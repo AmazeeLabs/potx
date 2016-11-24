@@ -104,6 +104,12 @@ function _potx_init_string_translation($function_name, $value = NULL, $context =
   foreach ($values as $value) {
     try {
       $value = eval('return ' . $value . ';'); // ha ha ha >:-)
+      if (empty($context)) {
+        drupal_set_message('No context: ' . $file . ', line ' . $line . '<br><b><pre>' . check_plain($value) . '</pre></b>', 'warning');
+      }
+      else {
+        drupal_set_message('OK: ' . $file . ', line ' . $line . '<br><b><pre>' . check_plain($value) . '</pre></b>');
+      }
       if (!empty($context)) {
         $function_name($value, array(), array('context' => $context));
       }
