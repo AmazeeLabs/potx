@@ -181,7 +181,7 @@ define('POTX_JS_OBJECT_CONTEXT', '
  * @param $api_version
  *   Drupal API version to work with.
  */
-function _potx_process_file($file_path, $strip_prefix = 0, $save_callback = '_potx_save_string', $version_callback = '_potx_save_version', $api_version = POTX_API_CURRENT) {
+function _potx_process_file($preset, $file_path, $strip_prefix = 0, $save_callback = '_potx_save_string', $version_callback = '_potx_save_version', $api_version = POTX_API_CURRENT) {
   global $_potx_tokens, $_potx_lookup;
 
   // Figure out the basename and extension to select extraction method.
@@ -193,20 +193,8 @@ function _potx_process_file($file_path, $strip_prefix = 0, $save_callback = '_po
   $file_name = $strip_prefix > 0 ? substr($file_path, $strip_prefix) : $file_path;
   _potx_find_version_number($code, $file_name, $version_callback);
 
-  // The .info files are not PHP code, no need to tokenize.
   if ($name_parts['extension'] == 'info' && $api_version < POTX_API_8) {
-    _potx_find_info_file_strings($file_path, $file_name, $save_callback, $api_version);
     return;
-  }
-  elseif ($name_parts['extension'] == 'yml' && $api_version > POTX_API_7) {
-    _potx_parse_yaml_file($code, $file_name, $file_path, $save_callback);
-  }
-  elseif ($name_parts['extension'] == 'js' && $api_version > POTX_API_5) {
-    // @todo: D7 context support.
-    _potx_parse_js_file($code, $file_name, $save_callback);
-  }
-  elseif ($name_parts['extension'] == 'twig' && $api_version > POTX_API_7) {
-    _potx_parse_twig_file($code, $file_name, $save_callback);
   }
 
   $constraint_extract = FALSE;
@@ -261,120 +249,12 @@ function _potx_process_file($file_path, $strip_prefix = 0, $save_callback = '_po
   }
   unset($raw_tokens);
 
-  // Regular t() calls with different usages.
-  if ($api_version > POTX_API_6) {
-    // Drupal 7 onwards supports context on t().
-    _potx_find_t_calls_with_context($file_name, $save_callback);
-    if ($api_version < POTX_API_8) {
-      // st() and $t() are supported up to Drupal 7.
-      _potx_find_t_calls_with_context($file_name, $save_callback, '$t', POTX_STRING_BOTH);
-      _potx_find_t_calls_with_context($file_name, $save_callback, 'st', POTX_STRING_INSTALLER);
+  foreach ($preset['functions'] as $function_name) {
+    if (strpos($function_name, 'format_plural') === FALSE) {
+      _potx_find_t_calls_with_context($file_name, $save_callback, $function_name);
     }
     else {
-      // TranslatableMarkup (and deprecated TranslationWrapper) added in Drupal 8.
-      _potx_find_t_calls_with_context($file_name, $save_callback, 'TranslatableMarkup');
-      _potx_find_t_calls_with_context($file_name, $save_callback, 'TranslationWrapper');
-    }
-  }
-  else {
-    // Context-less API up to Drupal 6.
-    _potx_find_t_calls($file_name, $save_callback);
-    _potx_find_t_calls($file_name, $save_callback, '$t', POTX_STRING_BOTH);
-    _potx_find_t_calls($file_name, $save_callback, 'st', POTX_STRING_INSTALLER);
-  }
-  if ($api_version < POTX_API_8) {
-    // This does not support context even in Drupal 7.
-    _potx_find_t_calls($file_name, $save_callback, '_locale_import_message', POTX_STRING_BOTH);
-  }
-  // dt() in drush does not support context either.
-  _potx_find_t_calls($file_name, $save_callback, 'dt');
-
-  if ($api_version > POTX_API_5) {
-    // Watchdog calls have both of their arguments translated from Drupal 6.x.
-    if ($api_version < POTX_API_8) {
-      _potx_find_watchdog_calls($file_name, $save_callback);
-    }
-
-    if ($api_version > POTX_API_7) {
-      // Logging calls may use a colorful set of methods now.
-      _potx_find_t_calls($file_name, $save_callback, 'debug');
-      _potx_find_t_calls($file_name, $save_callback, 'info');
-      _potx_find_t_calls($file_name, $save_callback, 'notice');
-      _potx_find_t_calls($file_name, $save_callback, 'warning');
-      _potx_find_t_calls($file_name, $save_callback, 'error');
-      _potx_find_t_calls($file_name, $save_callback, 'critical');
-      _potx_find_t_calls($file_name, $save_callback, 'alert');
-      _potx_find_t_calls($file_name, $save_callback, 'emergency');
-      _potx_find_log_calls($file_name, $save_callback);
-    }
-  }
-  else {
-    // Watchdog calls only have their first argument translated in Drupal 5.x
-    // and before.
-    _potx_find_t_calls($file_name, $save_callback, 'watchdog');
-  }
-
-  // Plurals need unique parsing.
-  if ($api_version < POTX_API_8) {
-    // format_plural() is removed in Drupal 8.
-    _potx_find_format_plural_calls($file_name, $save_callback, 'format_plural', $api_version);
-  }
-
-  // Support for formatPlural() calls in Drupal 8+.
-  if ($api_version > POTX_API_7) {
-    _potx_find_format_plural_calls($file_name, $save_callback, 'formatPlural', $api_version);
-    _potx_find_format_plural_calls($file_name, $save_callback, 'PluralTranslatableMarkup', $api_version);
-  }
-
-  if ($name_parts['extension'] == 'module') {
-    if ($api_version < POTX_API_7) {
-      _potx_find_perm_hook($file_name, $name_parts['filename'], $save_callback);
-    }
-    if ($api_version > POTX_API_5) {
-      // @todo: if tabs are not defined on the menu hook anymore, exclude this for 8.
-      _potx_find_menu_hooks($file_name, $name_parts['filename'], $save_callback);
-    }
-  }
-
-  // Support @Translation annotation (in doc comments) on Drupal 8+.
-  if ($api_version > POTX_API_7) {
-    _potx_find_translation_annotations($file_name, $save_callback);
-  }
-
-  if ($constraint_extract) {
-    _potx_find_constraint_messages($file_name, $save_callback);
-  }
-
-  if ($api_version > POTX_API_7) {
-    _potx_process_inline_templates($file_name, $save_callback);
-  }
-
-  // Special handling of some Drupal core files.
-  if ($api_version < POTX_API_8 && (($basename == 'locale.inc' && $api_version < POTX_API_7) || $basename == 'iso.inc')) {
-    _potx_find_language_names($file_name, $save_callback, $api_version);
-  }
-  elseif ($api_version > POTX_API_7 && $basename == 'LanguageManager.php') {
-    _potx_find_language_names($file_name, $save_callback, $api_version);
-  }
-  elseif ($basename == 'locale.module') {
-    // Applies to all Drupal versions, yay!
-    _potx_add_date_strings($file_name, $save_callback, $api_version);
-  }
-  elseif ($basename == 'common.inc') {
-    // Applies to all Drupal versions, yay!
-    _potx_add_format_interval_strings($file_name, $save_callback, $api_version);
-  }
-  elseif ($basename == 'system.module') {
-    // Applies to all Drupal versions, yay!
-    _potx_add_default_region_names($file_name, $save_callback, $api_version);
-  }
-  elseif ($basename == 'user.module' && $api_version < POTX_API_8) {
-    // Save default user role names (up to Drupal 7).
-    $save_callback('anonymous user', POTX_CONTEXT_NONE, $file_name);
-    $save_callback('authenticated user', POTX_CONTEXT_NONE, $file_name);
-    if ($api_version > POTX_API_6) {
-      // Administator role is included by default from Drupal 7.
-      $save_callback('administrator', POTX_CONTEXT_NONE, $file_name);
+      _potx_find_format_plural_calls($file_name, $save_callback, $function_name);
     }
   }
 }
@@ -961,7 +841,7 @@ function _potx_find_t_calls_with_context($file, $save_callback, $function_name =
           }
           if ($context !== POTX_CONTEXT_ERROR) {
             // Only save if there was no error in context parsing.
-            $save_callback(_potx_format_quoted_string($mid[1]), $context, $file, $line, $string_mode);
+            $save_callback($function_name, $mid[1], $context, $file, $line, $string_mode);
           }
         }
         else {
@@ -1138,7 +1018,8 @@ function _potx_find_format_plural_calls($file, $save_callback, $function_name = 
           if ($context !== POTX_CONTEXT_ERROR) {
             // Only save if there was no error in context parsing.
             $save_callback(
-              _potx_format_quoted_string($singular[1]) ."\0". _potx_format_quoted_string($plural[1]),
+              $function_name,
+              array($singular[1], $plural[1]),
               $context,
               $file,
               $line

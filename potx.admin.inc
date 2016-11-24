@@ -11,50 +11,13 @@
 function potx_select_component_form() {
 
   $form = array();
-  $components = _potx_component_list();
-  _potx_component_selector($form, $components);
-
-  // Generate translation file for a specific language if possible.
-  $languages = language_list();
-  if (count($languages) > 1 || !isset($languages['en'])) {
-    // We have more languages, or the single language we have is not English.
-    $options = array('n/a' => t('Language independent template'));
-    foreach ($languages as $langcode => $language) {
-      // Skip English, as we should not have translations for this language.
-      if ($langcode == 'en') {
-        continue;
-      }
-      $options[$langcode] = t('Template file for !langname translations', array('!langname' => t($language->name)));
-    }
-    $form['langcode'] = array(
-      '#type' => 'radios',
-      '#title' => t('Template language'),
-      '#default_value' => 'n/a',
-      '#options' => $options,
-      '#description' => t('Export a language independent or language dependent (plural forms, language team name, etc.) template.'),
-    );
-    $form['translations'] = array(
-      '#type' => 'checkbox',
-      '#title' => t('Include translations'),
-      '#description' => t('Include translations of strings in the file generated. Not applicable for language independent templates.')
-    );
-  }
 
   $form['submit'] = array(
     '#type' => 'submit',
-    '#value' => t('Extract'),
+    '#value' => t('Initialize UOS strings'),
   );
 
   return $form;
-}
-
-/**
- * Validation handler for potx component selection form.
- */
-function potx_select_component_form_validate($form, &$form_state) {
-  if (empty($form_state['values']['component'])) {
-    form_set_error('', t('You should select a component to export.'));
-  }
 }
 
 /**
@@ -74,65 +37,31 @@ function potx_select_component_form_submit($form, &$form_state) {
   // Silence status messages.
   potx_status('set', POTX_STATUS_MESSAGE);
 
-  // $form_state['values']['component'] either contains a specific file name
-  // with path, or a directory name for a module/theme or a module suite.
-  // Examples:
-  //   modules/watchdog
-  //   sites/all/modules/coder
-  //   sites/all/modules/i18n/i18n.module
-  //   themes/garland
+  $presets = array(
+    'sites/all/modules/custom/uos' => array(
+      'functions' => array('t', 'format_plural', 'uos_t', 'uos_format_plural'),
+    ),
+    'sites/all/modules/custom/abacus' => array(
+      'functions' => array('t', 'format_plural'),
+    ),
+  );
+  foreach ($presets as $component => $preset) {
 
-  $component = $form_state['values']['component'];
-  $pathinfo = pathinfo($component);
-  if (!isset($pathinfo['filename'])) {
-    // The filename key is only available in PHP 5.2.0+
-    $pathinfo['filename'] = substr($pathinfo['basename'], 0, strrpos($pathinfo['basename'], '.'));
-  }
+    $pathinfo = pathinfo($component);
+    if (!isset($pathinfo['filename'])) {
+      // The filename key is only available in PHP 5.2.0+
+      $pathinfo['filename'] = substr($pathinfo['basename'], 0, strrpos($pathinfo['basename'], '.'));
+    }
 
-  if (isset($pathinfo['extension'])) {
-    // A specific module or theme file was requested (otherwise there should be no extension).
-    potx_local_init($pathinfo['dirname']);
-    $files = _potx_explore_dir($pathinfo['dirname'] .'/', $pathinfo['filename']);
-    $strip_prefix = 1 + strlen($pathinfo['dirname']);
-    $outputname = $pathinfo['filename'];
-  }
-  // A directory name was requested.
-  else {
     potx_local_init($component);
-    $files = _potx_explore_dir($component .'/');
+    $files = _potx_explore_dir($component . '/');
     $strip_prefix = 1 + strlen($component);
-    $outputname = $pathinfo['basename'];
-  }
 
-  // Decide on template or translation file generation.
-  $template_langcode = $translation_langcode = NULL;
-  if (isset($form_state['values']['langcode']) && ($form_state['values']['langcode'] != 'n/a')) {
-    $template_langcode = $form_state['values']['langcode'];
-    $outputname .= '.'. $template_langcode;
-    if (!empty($form_state['values']['translations'])) {
-      $translation_langcode = $template_langcode;
-      $outputname .= '.po';
-    }
-    else {
-      $outputname .= '.pot';
+    // Collect every string in affected files. Installer related strings are discared.
+    foreach ($files as $file) {
+      _potx_process_file($preset, $file, $strip_prefix, '_potx_init_string_translation');
     }
   }
-  else {
-    $outputname .= '.pot';
-  }
-
-  // Collect every string in affected files. Installer related strings are discared.
-  foreach ($files as $file) {
-    _potx_process_file($file, $strip_prefix);
-  }
-  potx_finish_processing('_potx_save_string');
-
-  // Need to include full parameter list to get to passing the language codes.
-  _potx_build_files(POTX_STRING_RUNTIME, POTX_BUILD_SINGLE, 'general', '_potx_save_string', '_potx_save_version', '_potx_get_header', $template_langcode, $translation_langcode);
-
-  _potx_write_files($outputname, 'attachment');
-
-  exit;
 }
 
 /**

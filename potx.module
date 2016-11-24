@@ -11,16 +11,6 @@
  */
 
 /**
- * Implementation of hook_help().
- */
-function potx_help($path, $arg) {
-  switch ($path) {
-    case 'admin/config/regional/translate/extract':
-      return '<p>'. t('This page allows you to generate translation templates for module and theme files. Select the module or theme you wish to generate a template file for. A single Gettext Portable Object (Template) file is generated, so you can easily save it and start translation.') .'</p>';
-  }
-}
-
-/**
  * Implementation of hook_menu().
  */
 function potx_menu() {
@@ -94,5 +84,33 @@ function potx_coder_review(&$coder_args, $review, $rule, $lines, &$results) {
     }
     $rule['#warning'] = htmlspecialchars_decode($message, ENT_QUOTES) . (!empty($docs_url) ? (' <a href="'. $docs_url .'">'. t('Read the documentation') .'</a>.') : '');
     _coder_review_error($results, $rule, $severity_name, $lineno, $line);
+  }
+}
+
+/**
+ * Our hackish save callback that supports UOS.
+ *
+ * It only initializes translation strings by passing them to t().
+ */
+function _potx_init_string_translation($function_name, $value = NULL, $context = NULL, $file = NULL, $line = 0, $string_mode = POTX_STRING_RUNTIME) {
+  if (strpos($function_name, 'uos_') === 0) {
+    $function_name = substr($function_name, 4);
+    $context = !empty($context) ? 'uos:' . $context : 'uos';
+  }
+  if ($function_name == 'format_plural') {
+    $function_name = 't';
+  }
+  $values = is_array($value) ? $value : array($value);
+  foreach ($values as $value) {
+    try {
+      $value = eval('return ' . $value . ';'); // ha ha ha >:-)
+      if (!empty($context)) {
+        $function_name($value, array(), array('context' => $context));
+      }
+      else {
+        $function_name($value);
+      }
+    }
+    catch (\Exception $e) { }
   }
 }
